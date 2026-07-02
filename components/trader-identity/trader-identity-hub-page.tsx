@@ -424,16 +424,31 @@ function StringListEditor({
     onChange(next)
   }
 
+  function removeItem(index: number) {
+    onChange(items.filter((_, i) => i !== index))
+  }
+
   return (
     <div className="space-y-2">
       {items.map((item, index) => (
         <div key={index} className="space-y-0.5">
-          <Input
-            value={item.text}
-            onChange={(e) => updateItem(index, e.target.value)}
-            placeholder={placeholder}
-            className="h-8 text-sm"
-          />
+          <div className="flex gap-2">
+            <Input
+              value={item.text}
+              onChange={(e) => updateItem(index, e.target.value)}
+              placeholder={placeholder}
+              className="h-8 text-sm"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={() => removeItem(index)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
           {item.addedAt && !isNaN(new Date(item.addedAt).getTime()) && (
             <p className="pl-1 text-xs text-muted-foreground">
               Toegevoegd op {format(new Date(item.addedAt), 'd MMM yyyy, HH:mm', { locale: nl })}
