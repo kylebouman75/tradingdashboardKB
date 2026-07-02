@@ -407,8 +407,12 @@ function StringListEditor({
   onChange: (items: IdentityItem[]) => void
   placeholder?: string
 }) {
+  const [draft, setDraft] = React.useState('')
+
   function addItem() {
-    onChange([...items, { text: '', addedAt: new Date().toISOString() }])
+    if (!draft.trim()) return
+    onChange([...items, { text: draft.trim(), addedAt: new Date().toISOString() }])
+    setDraft('')
   }
 
   function updateItem(index: number, text: string) {
@@ -437,10 +441,31 @@ function StringListEditor({
           )}
         </div>
       ))}
-      <Button type="button" variant="outline" size="sm" className="w-full" onClick={addItem}>
-        <Plus className="mr-1.5 h-3.5 w-3.5" />
-        Toevoegen
-      </Button>
+      <div className="flex gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={placeholder}
+          className="h-8 text-sm"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              addItem()
+            }
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={addItem}
+          disabled={!draft.trim()}
+        >
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          Toevoegen
+        </Button>
+      </div>
     </div>
   )
 }
