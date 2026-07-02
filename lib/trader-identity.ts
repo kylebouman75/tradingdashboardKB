@@ -6,13 +6,18 @@ export type IdentityChallenge = Database['public']['Tables']['identity_challenge
 export type ProcessStreak = Database['public']['Tables']['process_streaks']['Row']
 export type GrowthTimeline = Database['public']['Tables']['growth_timeline']['Row']
 
+export type IdentityItem = {
+  text: string
+  addedAt: string
+}
+
 export type UpdateTraderIdentityInput = {
-  a_game?: string[]
-  b_game?: string[]
-  c_game?: string[]
-  mental_leaks?: string[]
-  patterns?: string[]
-  strengths?: string[]
+  a_game?: IdentityItem[]
+  b_game?: IdentityItem[]
+  c_game?: IdentityItem[]
+  mental_leaks?: IdentityItem[]
+  patterns?: IdentityItem[]
+  strengths?: IdentityItem[]
   current_growth_phase?: string | null
   week_focus?: string | null
 }
@@ -63,6 +68,28 @@ export async function upsertTraderIdentity(
   return data
 }
 
+// Haalt het focuspunt op uit de meest recente goedgekeurde Weekly Review.
+export async function getLatestApprovedWeeklyFocus(
+  supabase: SupabaseClient<Database>,
+  userId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('weekly_reviews')
+    .select('approved_content')
+    .eq('user_id', userId)
+    .eq('status', 'approved')
+    .order('week_start_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!data) return null
+  const content = typeof data.approved_content === 'string' ? data.approved_content : null
+  if (!content) return null
+
+  const match = content.match(/###\s*Focus voor volgende week\s*\n([\s\S]*?)(?=\n###|$)/)
+  return match?.[1]?.trim() ?? null
+}
+
 // ─── Identity Challenges ───────────────────────────────────────────────────
 
 export async function getChallenges(
@@ -104,14 +131,6 @@ export async function resolveChallenge(
     .single()
   if (error) throw error
   return data
-}
-
-export async function deleteChallenge(
-  supabase: SupabaseClient<Database>,
-  id: string
-): Promise<void> {
-  const { error } = await supabase.from('identity_challenges').delete().eq('id', id)
-  if (error) throw error
 }
 
 // ─── Process Streaks ───────────────────────────────────────────────────────

@@ -1,16 +1,18 @@
 'use client'
 
 import * as React from 'react'
-import { Plus, X, Check, Trash2, RotateCcw, Flame } from 'lucide-react'
+import { format } from 'date-fns'
+import { nl } from 'date-fns/locale'
+import { Plus, Check, Trash2, RotateCcw, Flame } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
 import {
   getTraderIdentity,
   upsertTraderIdentity,
+  getLatestApprovedWeeklyFocus,
   getChallenges,
   createChallenge,
   resolveChallenge,
-  deleteChallenge,
   getStreaks,
   createStreak,
   updateStreakCount,
@@ -20,6 +22,7 @@ import {
   resolveGrowthEntry,
   deleteGrowthEntry,
   type TraderIdentity,
+  type IdentityItem,
   type IdentityChallenge,
   type ProcessStreak,
   type GrowthTimeline,
@@ -37,18 +40,16 @@ import { Separator } from '@/components/ui/separator'
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 type IdentityFormState = {
-  week_focus: string
   current_growth_phase: string
-  a_game: string[]
-  b_game: string[]
-  c_game: string[]
-  strengths: string[]
-  mental_leaks: string[]
-  patterns: string[]
+  a_game: IdentityItem[]
+  b_game: IdentityItem[]
+  c_game: IdentityItem[]
+  strengths: IdentityItem[]
+  mental_leaks: IdentityItem[]
+  patterns: IdentityItem[]
 }
 
 const EMPTY_FORM: IdentityFormState = {
-  week_focus: '',
   current_growth_phase: '',
   a_game: [],
   b_game: [],
@@ -58,21 +59,38 @@ const EMPTY_FORM: IdentityFormState = {
   patterns: [],
 }
 
+function toItemArray(value: unknown): IdentityItem[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((v) => {
+      if (typeof v === 'string') return { text: v, addedAt: '' }
+      if (v && typeof v === 'object' && 'text' in v) {
+        return {
+          text: String((v as Record<string, unknown>).text ?? ''),
+          addedAt: String((v as Record<string, unknown>).addedAt ?? ''),
+        }
+      }
+      return null
+    })
+    .filter((v): v is IdentityItem => v !== null)
+}
+
 function identityToFormState(identity: TraderIdentity): IdentityFormState {
-  function toStringArray(value: unknown): string[] {
-    if (!Array.isArray(value)) return []
-    return value.filter((v): v is string => typeof v === 'string')
-  }
   return {
-    week_focus: identity.week_focus ?? '',
     current_growth_phase: identity.current_growth_phase ?? '',
-    a_game: toStringArray(identity.a_game),
-    b_game: toStringArray(identity.b_game),
-    c_game: toStringArray(identity.c_game),
-    strengths: toStringArray(identity.strengths),
-    mental_leaks: toStringArray(identity.mental_leaks),
-    patterns: toStringArray(identity.patterns),
+    a_game: toItemArray(identity.a_game),
+    b_game: toItemArray(identity.b_game),
+    c_game: toItemArray(identity.c_game),
+    strengths: toItemArray(identity.strengths),
+    mental_leaks: toItemArray(identity.mental_leaks),
+    patterns: toItemArray(identity.patterns),
   }
+}
+
+function formatNlDate(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 // ─── Main component ────────────────────────────────────────────────────────
@@ -82,8 +100,10 @@ export function TraderIdentityHubPage() {
   const [userId, setUserId] = React.useState<string | null>(null)
   const [isLoaded, setIsLoaded] = React.useState(false)
 
-  // Identity form
+  // Identity form (week_focus is readonly, not part of editable state)
   const [form, setForm] = React.useState<IdentityFormState>(EMPTY_FORM)
+  const [weekFocusValue, setWeekFocusValue] = React.useState<string>('')
+  const [lastUpdatedAt, setLastUpdatedAt] = React.useState<string | null>(null)
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle')
   const debounceRef = React.useRef<ReturnType<typeof setTimeout>>()
   const skipNextSave = React.useRef(true)
@@ -107,14 +127,28 @@ export function TraderIdentityHubPage() {
 
       setUserId(user.id)
 
-      const [identity, challengesData, streaksData, timelineData] = await Promise.all([
+      const [identity, challengesData, streaksData, timelineData, latestFocus] = await Promise.all([
         getTraderIdentity(supabase, user.id),
         getChallenges(supabase, user.id),
         getStreaks(supabase, user.id),
         getGrowthTimeline(supabase, user.id),
+        getLatestApprovedWeeklyFocus(supabase, user.id),
       ])
 
-      if (identity) setForm(identityToFormState(identity))
+      if (identity) {
+        setForm(identityToFormState(identity))
+        setLastUpdatedAt(identity.last_updated_at)
+      }
+
+      // week_focus: meest recente goedgekeurde Weekly Review heeft prioriteit
+      const focusToUse = latestFocus ?? identity?.week_focus ?? null
+      setWeekFocusValue(focusToUse ?? '')
+
+      // Persist als de focus veranderd is
+      if (latestFocus && latestFocus !== identity?.week_focus) {
+        await upsertTraderIdentity(supabase, user.id, { week_focus: latestFocus })
+      }
+
       setChallenges(challengesData)
       setStreaks(streaksData)
       setTimeline(timelineData)
@@ -124,7 +158,7 @@ export function TraderIdentityHubPage() {
     load()
   }, [supabase])
 
-  // Autosave identity form
+  // Autosave identity form (week_focus niet opgenomen — readonly)
   React.useEffect(() => {
     if (skipNextSave.current) {
       skipNextSave.current = false
@@ -137,8 +171,7 @@ export function TraderIdentityHubPage() {
 
     debounceRef.current = setTimeout(async () => {
       try {
-        await upsertTraderIdentity(supabase, userId, {
-          week_focus: form.week_focus || null,
+        const saved = await upsertTraderIdentity(supabase, userId, {
           current_growth_phase: form.current_growth_phase || null,
           a_game: form.a_game,
           b_game: form.b_game,
@@ -147,6 +180,7 @@ export function TraderIdentityHubPage() {
           mental_leaks: form.mental_leaks,
           patterns: form.patterns,
         })
+        setLastUpdatedAt(saved.last_updated_at)
         setSaveStatus('saved')
       } catch {
         setSaveStatus('error')
@@ -174,16 +208,21 @@ export function TraderIdentityHubPage() {
         <h2 className="text-lg font-semibold">Trader Profiel</h2>
 
         <div className="grid gap-6 md:grid-cols-2">
+          {/* Week focus — readonly, gevuld vanuit Weekly Review */}
           <div className="space-y-2">
-            <Label htmlFor="week_focus">Weekfocus</Label>
-            <Textarea
-              id="week_focus"
-              value={form.week_focus}
-              onChange={(e) => updateField('week_focus', e.target.value)}
-              placeholder="Wat is mijn focus deze week? Eén concrete gedragsintentie..."
-              rows={3}
-            />
+            <div className="flex items-center gap-2">
+              <Label>Weekfocus</Label>
+              <Badge variant="outline" className="text-xs">Vanuit Weekly Review</Badge>
+            </div>
+            <div className="text-sm text-foreground">
+              {weekFocusValue || 'Nog geen weekfocus beschikbaar — voltooi eerst een Weekly Review'}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Vanuit Weekly Review — niet bewerkbaar
+            </p>
           </div>
+
+          {/* Huidige groeifase — bewerkbaar, toont last_updated_at */}
           <div className="space-y-2">
             <Label htmlFor="current_growth_phase">Huidige Groeifase</Label>
             <Textarea
@@ -193,6 +232,11 @@ export function TraderIdentityHubPage() {
               placeholder="Waar zit ik nu in mijn ontwikkeling als trader?"
               rows={3}
             />
+            {lastUpdatedAt && (
+              <p className="text-xs text-muted-foreground">
+                Bijgewerkt op {formatNlDate(lastUpdatedAt)}
+              </p>
+            )}
           </div>
         </div>
 
@@ -316,8 +360,8 @@ function GameCard({
   title: string
   description: string
   color: 'green' | 'yellow' | 'red'
-  items: string[]
-  onChange: (items: string[]) => void
+  items: IdentityItem[]
+  onChange: (items: IdentityItem[]) => void
   placeholder: string
 }) {
   return (
@@ -340,8 +384,8 @@ function ListSection({
   placeholder,
 }: {
   title: string
-  items: string[]
-  onChange: (items: string[]) => void
+  items: IdentityItem[]
+  onChange: (items: IdentityItem[]) => void
   placeholder: string
 }) {
   return (
@@ -359,43 +403,38 @@ function StringListEditor({
   onChange,
   placeholder,
 }: {
-  items: string[]
-  onChange: (items: string[]) => void
+  items: IdentityItem[]
+  onChange: (items: IdentityItem[]) => void
   placeholder?: string
 }) {
   function addItem() {
-    onChange([...items, ''])
+    onChange([...items, { text: '', addedAt: new Date().toISOString() }])
   }
 
-  function updateItem(index: number, value: string) {
+  function updateItem(index: number, text: string) {
     const next = [...items]
-    next[index] = value
+    next[index] = {
+      text,
+      addedAt: next[index].addedAt || new Date().toISOString(),
+    }
     onChange(next)
-  }
-
-  function removeItem(index: number) {
-    onChange(items.filter((_, i) => i !== index))
   }
 
   return (
     <div className="space-y-2">
       {items.map((item, index) => (
-        <div key={index} className="flex gap-2">
+        <div key={index} className="space-y-0.5">
           <Input
-            value={item}
+            value={item.text}
             onChange={(e) => updateItem(index, e.target.value)}
             placeholder={placeholder}
             className="h-8 text-sm"
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={() => removeItem(index)}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
+          {item.addedAt && !isNaN(new Date(item.addedAt).getTime()) && (
+            <p className="pl-1 text-xs text-muted-foreground">
+              Toegevoegd op {format(new Date(item.addedAt), 'd MMM yyyy, HH:mm', { locale: nl })}
+            </p>
+          )}
         </div>
       ))}
       <Button type="button" variant="outline" size="sm" className="w-full" onClick={addItem}>
@@ -443,11 +482,6 @@ function ChallengesSection({
     setChallenges((prev) => prev.map((c) => (c.id === id ? updated : c)))
   }
 
-  async function handleDelete(id: string) {
-    await deleteChallenge(supabase, id)
-    setChallenges((prev) => prev.filter((c) => c.id !== id))
-  }
-
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-semibold">Actieve Uitdagingen</h2>
@@ -473,12 +507,7 @@ function ChallengesSection({
 
       <div className="space-y-2">
         {active.map((challenge) => (
-          <ChallengeRow
-            key={challenge.id}
-            challenge={challenge}
-            onResolve={handleResolve}
-            onDelete={handleDelete}
-          />
+          <ChallengeRow key={challenge.id} challenge={challenge} onResolve={handleResolve} />
         ))}
       </div>
 
@@ -494,12 +523,7 @@ function ChallengesSection({
           {showResolved && (
             <div className="mt-3 space-y-2">
               {resolved.map((challenge) => (
-                <ChallengeRow
-                  key={challenge.id}
-                  challenge={challenge}
-                  onResolve={handleResolve}
-                  onDelete={handleDelete}
-                />
+                <ChallengeRow key={challenge.id} challenge={challenge} onResolve={handleResolve} />
               ))}
             </div>
           )}
@@ -512,11 +536,9 @@ function ChallengesSection({
 function ChallengeRow({
   challenge,
   onResolve,
-  onDelete,
 }: {
   challenge: IdentityChallenge
   onResolve: (id: string) => void
-  onDelete: (id: string) => void
 }) {
   const isResolved = challenge.status === 'resolved'
   return (
@@ -539,14 +561,6 @@ function ChallengeRow({
           Oplossen
         </Button>
       )}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 text-muted-foreground hover:text-destructive"
-        onClick={() => onDelete(challenge.id)}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
     </div>
   )
 }
@@ -651,18 +665,10 @@ function StreaksSection({
                 </p>
               )}
               <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => handleIncrement(streak)}
-                >
+                <Button size="sm" className="flex-1" onClick={() => handleIncrement(streak)}>
                   +1 dag
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleReset(streak)}
-                >
+                <Button size="sm" variant="outline" onClick={() => handleReset(streak)}>
                   <RotateCcw className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -827,12 +833,11 @@ function TimelineRow({
             <p className={`font-medium ${isResolved ? 'text-muted-foreground' : ''}`}>
               {entry.period_label}
             </p>
-            {isResolved && (
+            {isResolved ? (
               <Badge variant="outline" className="border-green-500/30 bg-green-500/10 text-green-400">
                 Afgerond
               </Badge>
-            )}
-            {!isResolved && (
+            ) : (
               <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-blue-400">
                 Actief
               </Badge>

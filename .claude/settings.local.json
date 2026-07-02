@@ -2,7 +2,24 @@
   "permissions": {
     "allow": [
       "Skill(run)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "PowerShell(ls *)",
+      "PowerShell(curl.exe -s -o NUL -w \"%{http_code} %{redirect_url}\" \"http://localhost:3000/libraries/trader-identity-hub\")",
+      "PowerShell(curl.exe -sL -o NUL -w \"%{http_code} %{redirect_url}\" --max-redirs 5 \"http://localhost:3000/libraries/trader-identity-hub\")",
+      "Bash(npx next *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3001/\")",
+      "Bash(curl *)",
+      "Bash(npx --yes playwright --version)",
+      "Bash(npx --yes playwright@1.61.1 --version)",
+      "Bash(/c/Users/kyle_/AppData/Local/npm-cache/_npx/e41f203b7505f1fb/node_modules/.bin/playwright install *)",
+      "PowerShell(node \"C:\\\\Users\\\\kyle_\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\test-trader-hub.js\" 2>&1)",
+      "PowerShell(node \"C:\\\\Users\\\\kyle_\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\verify-hub.js\" 2>&1)",
+      "PowerShell(node \"C:\\\\Users\\\\kyle_\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\verify-hub-full.js\" 2>&1)",
+      "PowerShell(node \"C:\\\\Users\\\\kyle_\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\verify-hub-preview.js\" 2>&1)",
+      "PowerShell(node \"C:\\\\Users\\\\kyle_\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\verify-test-hub.js\" 2>&1)",
+      "Bash(npx tsc *)",
+      "Bash(git add *)"
     ]
   }
 }
